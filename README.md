@@ -3,18 +3,18 @@ All nessasary code and documentation for a simple and scalable aproach for Centr
 
 ## Solution Requirements:
 
-•	Access to all VPC flow logs for chosen user/account, in a single place, without additional logging requirements
-•	No complex SQL to query the logs
-•	Ability to handle hundreds of accounts, each having multiple VPC’s
-•	Simple to implement and maintain
-•	Includes additional metadata/costume format for the logs
-•	Supports incoming logs from different regions
+*	Access to all VPC flow logs for chosen user/account, in a single place, without additional logging requirements
+*	No complex SQL to query the logs
+*	Ability to handle hundreds of accounts, each having multiple VPC’s
+* Simple to implement and maintain
+*	Includes additional metadata/costume format for the logs
+*	Supports incoming logs from different regions
 
 
 ## Design:
-•	All accounts are sending logs, directly to the master’s account bucket, which has the appropriate bucket policies to accept the logs to be written by the log service. The logs arrive in batches of max 75KB.
-•	SQS is used to queue the requests of any PUT event on the bucket. From, there the Lambda picks them up for processing. SQS can further batch the events and handles retries. Failed events are pushed to a dead letter queue for manual processing.
-•	The lambda executes the following steps, in summary:
+*	All accounts are sending logs, directly to the master’s account bucket, which has the appropriate bucket policies to accept the logs to be written by the log service. The logs arrive in batches of max 75KB.
+*	SQS is used to queue the requests of any PUT event on the bucket. From, there the Lambda picks them up for processing. SQS can further batch the events and handles retries. Failed events are pushed to a dead letter queue for manual processing.
+*	The lambda executes the following steps, in summary:
 1.	Unzip the logs
 2.	Check if they are in the correct custom format
 3.	Builds the appropriate structure so as to send them to CW, using the SDK. Logs are required to be on JSON object with appropriate attribute names, so that they can be quarriable by CW insights.
