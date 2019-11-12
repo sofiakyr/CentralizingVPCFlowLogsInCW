@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  BucketNameLambda:
+    Type: String
+    Description: Name of the bucket that has the lambda code
+  LambdaCodeKey:
+    Default : index.js.zip
+    Type: String
+    Description: key of object that has your lambda code, default index.js.zip
+  SQSDeadLetterqueueName:
+    Default : sqsDeadLetterQueueCentralVPCLogs
+    Type: String
+    Description: The name of the dead letter Qeue, for failed logs, default sqsDeadLetterQueueCentralVPCLogs
+  SQSqueueName:
+    Default : sqsSourceQueueVPCLogs
+    Type: String
+    Description: The name of the queue, default sqsSourceQueueVPCLogs
+  BucketName:
+    Type: String
+    Description: Give a name for your Central logging bucket 
+  id:
+    Type: CommaDelimitedList
+    Description: Id of all accounts that will be sending logs, comma delimetered, if left empty will use all ids whithin orginization
+  LogFormat: 
+    Type: String
+    Description: Your custom Log format, as copied from Flow Log creation ${...}, default will use all metadata in the order they come
+  LogGroupName:
+    Type: String
+    Description: The log Group Name, where all logs will be centrazed in
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+     LogGroupName: !Ref LogGroupName
+  DeadLetterQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Ref SQSDeadLetterqueueName
+      DelaySeconds: 0
+      MaximumMessageSize: 75000
+      MessageRetentionPeriod: 604800
+      ReceiveMessageWaitTimeSeconds: 0
+      VisibilityTimeout: 0
+  SourceQueue:
+    Type: 'AWS::SQS::Queue'
+    DependsOn: 
+      - DeadLetterQueue
+    Properties:
+      QueueName: !Ref SQSqueueName
+      DelaySeconds: 0
+      MaximumMessageSize: 75000
+      MessageRetentionPeriod: 14400
+      ReceiveMessageWaitTimeSeconds: 0
+      VisibilityTimeout: 600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+  SQSPolicy:
+    Type: AWS::SQS::QueuePolicy
+    DependsOn: SourceQueue
+    Properties: 
+      PolicyDocument:
+        Statement:
+          Effect: Allow
+          Principal: '*'
+          Action: 
+            - 'SQS:SendMessage'
+            - 'SQS:GetQueueUrl'
+            - 'SQS:GetQueueAttributes'
+            - 'SQS:ReceiveMessage'
+          Resource: !GetAtt SourceQueue.Arn
+          Condition:
+            ArnEquals:
+              aws:SourceArn:  !Join [ "", [ "arn:aws:s3:*:*:", !Ref BucketName ] ]
+      Queues: 
+        - !Ref SourceQueue
+  CentralLoggingBucket:
+    Type: 'AWS::S3::Bucket'
+    DependsOn:
+      - SourceQueue
+    Properties:
+      BucketName: !Ref BucketName
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt SourceQueue.Arn
+  PoliciesForBucket:
+    Type: 'AWS::S3::BucketPolicy'
+    DependsOn: CentralLoggingBucket
+    Properties:
+      Bucket: !Ref BucketName
+      PolicyDocument:
+        Statement:
+          - Action:
+              - 's3:PutObject'
+            Effect: Allow
+            Resource:
+              'Fn::Transform':
+                Name: macroStringTransform
+                Parameters:
+                  bucketName: !Ref BucketName
+                  accountList: !Ref id
+            Principal:
+              Service: delivery.logs.amazonaws.com
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': bucket-owner-full-control
+          - Action:
+              - 's3:GetBucketAcl'
+            Effect: Allow
+            Resource: !Join 
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref BucketName
+            Principal:
+              Service: delivery.logs.amazonaws.com
+  S3andCWRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "lambda.amazonaws.com" 
+            Action: 
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: lambdaLogs
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:Get*
+                  - s3:List*
+                  - logs:Describe*
+                  - logs:Get*
+                  - logs:List*
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:TestMetricFilter
+                  - logs:FilterLogEvents
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+  moveS3toCWcustomFormat:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - S3andCWRole
+      - SourceQueue
+    Properties:
+      Environment:
+        Variables:
+          LOGGROUP:
+            Ref: LogGroupName
+          LOG_FORMAT:
+            Ref: LogFormat
+      Code:
+        S3Bucket: !Ref BucketNameLambda
+        S3Key: !Ref LambdaCodeKey
+      Handler: index.handler
+      Role: !GetAtt S3andCWRole.Arn
+      Runtime: nodejs10.x
+      Description: lambda for sending flow logs from S3 to CW, with custom format
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    DependsOn: 
+      - moveS3toCWcustomFormat
+      - SourceQueue
+    Properties:
+      BatchSize: 3
+      Enabled: true
+      EventSourceArn: !GetAtt SourceQueue.Arn
+      FunctionName: !GetAtt moveS3toCWcustomFormat.Arn
+# To do
+# add error hanling for when an object is created without a key
+# add a foe each for every record to deal with baches
