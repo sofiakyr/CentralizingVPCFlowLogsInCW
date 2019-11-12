@@ -27,8 +27,8 @@ Macros are basically lambda functions which you can call in your Cloudformation,
 
 In our case we are trying to build the bucket policy for the centralized bucket. We need to allow permissions for each account. The user inputs the ids of the accounts and we want to transformed those in the appropriate resource for the bucket policy. If the user doesn’t specify the accounts, the function gets a list of all the ids that are under the organization automatically, using the SDK, and then transform those into the appropriate resource, as following:
 
-"arn:aws:s3:::demo6898798798/AWSLogs/753390936611/*",
-"arn:aws:s3:::demo6898798798/AWSLogs/677731379415/*" 
+"arn:aws:s3:::demo6898798798/AWSLogs/1111111111111/*",
+"arn:aws:s3:::demo6898798798/AWSLogs/1111111111111/*" 
 
 2.	 Create a bucket in S3, where you will put the lambda code, which is used to sent logs from S3 to CW. 
 
